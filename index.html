@@ -100,7 +100,6 @@
 
         // --- APPLICATION FORM COMPONENT (Moved outside App for stability) ---
         const JobApplicationForm = ({ activeJob, formData, handleInputChange, handleSubmitApplication, setActiveJob, submissionStatus, fileInputRef }) => (
-            // FIX: Using items-start for mobile keyboard fix and stable fixed positioning.
             <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-start justify-center p-4 z-50 overflow-y-auto">
                 <div className="bg-white p-6 md:p-10 rounded-xl shadow-2xl max-w-lg w-full mt-10 mb-10 transform transition-all duration-300 max-h-[90vh] overflow-y-auto">
                     <h2 className="text-2xl font-extrabold text-indigo-700 mb-2">{activeJob.title}</h2>
@@ -207,6 +206,37 @@
             </div>
         );
 
+        // --- ADMIN LOGIN COMPONENT (MOVED OUTSIDE App for stability) ---
+        const AdminLoginForm = ({ isAdminMode, handleAdminLogout, handleAdminLogin, adminPassword, setAdminPassword }) => (
+            <div className="flex justify-end p-4 bg-white rounded-xl shadow-md mb-8">
+                {isAdminMode ? (
+                    <button
+                        onClick={handleAdminLogout}
+                        className="px-4 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition duration-150"
+                    >
+                        Log Out Admin
+                    </button>
+                ) : (
+                    <form onSubmit={handleAdminLogin} className="flex space-x-2 items-center">
+                        <input
+                            type="password"
+                            placeholder="Admin Password"
+                            value={adminPassword}
+                            onChange={(e) => setAdminPassword(e.target.value)}
+                            required
+                            className="p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 w-40 text-sm"
+                        />
+                        <button
+                            type="submit"
+                            className="px-4 py-2 bg-indigo-500 text-white font-semibold rounded-lg hover:bg-indigo-600 transition duration-150 text-sm"
+                        >
+                            Admin Login
+                        </button>
+                    </form>
+                )}
+            </div>
+        );
+
 
         
         const App = () => {
@@ -220,8 +250,8 @@
             
             // ADMIN STATE
             const [isAdminMode, setIsAdminMode] = useState(false);
-            const [adminPassword, setAdminPassword] = useState('');
-
+            const [adminPassword, setAdminPassword] = useState(''); // State is still needed here
+            
             // File input reference
             const fileInputRef = useRef(null);
         
@@ -407,36 +437,6 @@
                 </div>
             );
         
-            const AdminLoginForm = () => (
-                <div className="flex justify-end p-4 bg-white rounded-xl shadow-md mb-8">
-                    {isAdminMode ? (
-                        <button
-                            onClick={handleAdminLogout}
-                            className="px-4 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition duration-150"
-                        >
-                            Log Out Admin
-                        </button>
-                    ) : (
-                        <form onSubmit={handleAdminLogin} className="flex space-x-2 items-center">
-                            <input
-                                type="password"
-                                placeholder="Admin Password"
-                                value={adminPassword}
-                                onChange={(e) => setAdminPassword(e.target.value)}
-                                required
-                                className="p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 w-40 text-sm"
-                            />
-                            <button
-                                type="submit"
-                                className="px-4 py-2 bg-indigo-500 text-white font-semibold rounded-lg hover:bg-indigo-600 transition duration-150 text-sm"
-                            >
-                                Admin Login
-                            </button>
-                        </form>
-                    )}
-                </div>
-            );
-        
             const ApplicationDashboard = () => {
                 // This component is only rendered if isAdminMode is true
                 return (
@@ -499,7 +499,13 @@
         
             return (
                 <div className="min-h-screen bg-gray-100 font-sans p-4 md:p-8">
-                    <AdminLoginForm /> {/* Always visible login/logout */}
+                    <AdminLoginForm 
+                        isAdminMode={isAdminMode}
+                        handleAdminLogout={handleAdminLogout}
+                        handleAdminLogin={handleAdminLogin}
+                        adminPassword={adminPassword}
+                        setAdminPassword={setAdminPassword}
+                    />
                     
                     <header className="text-center py-10 bg-white rounded-xl shadow-md mb-8">
                         <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight">
