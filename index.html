@@ -44,12 +44,15 @@
 
     <!-- The main script block containing the React component (using type="text/babel") -->
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useRef } = React;
         
         // --- Global Variables and Firebase Setup (Accessing variables defined in the environment) ---
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        
+        // ADMIN CONFIG
+        const ADMIN_SECRET = 'globaladmin'; // Secret password to access the dashboard
         
         const JOB_ROLES = [
             { title: 'Remote Software Engineer (L3)', department: 'Engineering', location: 'USA, UK, Canada', desc: 'Develop, test, and deploy high-quality software solutions using React and Node.js. Requires 3+ years experience.' },
@@ -65,6 +68,13 @@
             const [applications, setApplications] = useState([]);
             const [activeJob, setActiveJob] = useState(null);
             const [submissionStatus, setSubmissionStatus] = useState(null);
+            
+            // ADMIN STATE
+            const [isAdminMode, setIsAdminMode] = useState(false);
+            const [adminPassword, setAdminPassword] = useState('');
+
+            // File input reference
+            const fileInputRef = useRef(null);
         
             // Form state
             const [formData, setFormData] = useState({
@@ -73,7 +83,8 @@
                 phone: '',
                 address: '',
                 country: '',
-                resumeLink: '',
+                resumeFile: null, // Stores the File object
+                resumeFileName: '', // Stores the name of the file
             });
         
             // 1. Firebase Initialization and Authentication
@@ -105,9 +116,10 @@
                 }
             }, []);
         
-            // 2. Real-time Listener for Applications (Admin View)
+            // 2. Real-time Listener for Applications (Only runs if DB is ready)
             useEffect(() => {
-                if (!isAuthReady || !db) return;
+                // Fetch applications only if in Admin Mode AND DB is ready
+                if (!isAuthReady || !db || !isAdminMode) return;
         
                 // Path: /artifacts/{appId}/public/data/job_applications
                 const collectionPath = `artifacts/${appId}/public/data/job_applications`;
@@ -126,24 +138,64 @@
                 });
         
                 return () => unsubscribe();
-            }, [isAuthReady, db]);
+            }, [isAuthReady, db, isAdminMode]); // Rerun effect when isAdminMode changes
         
             const handleInputChange = (e) => {
-                const { name, value } = e.target;
-                setFormData(prev => ({ ...prev, [name]: value }));
+                const { name, value, files } = e.target;
+                
+                if (name === 'resumeFile' && files && files[0]) {
+                    const file = files[0];
+                    if (file.size > 5 * 1024 * 1024) { // Check for file size limit (5MB)
+                        setSubmissionStatus({ type: 'error', message: 'File is too large. Max size is 5MB.' });
+                        if (fileInputRef.current) fileInputRef.current.value = "";
+                        setFormData(prev => ({ ...prev, resumeFile: null, resumeFileName: '' }));
+                        return;
+                    }
+
+                    // Store the File object and its name
+                    setFormData(prev => ({ 
+                        ...prev, 
+                        resumeFile: file,
+                        resumeFileName: file.name
+                    }));
+                } else {
+                    // Handle standard text inputs
+                    setFormData(prev => ({ ...prev, [name]: value }));
+                }
+            };
+            
+            // --- Admin Logic ---
+            const handleAdminLogin = (e) => {
+                e.preventDefault();
+                if (adminPassword === ADMIN_SECRET) {
+                    setIsAdminMode(true);
+                    setAdminPassword('');
+                } else {
+                    console.error('Incorrect Admin Password');
+                    setAdminPassword('');
+                }
             };
         
+            const handleAdminLogout = () => {
+                setIsAdminMode(false);
+                setApplications([]); // Clear applications on logout
+            };
+            
+            // --- Application Logic ---
             const handleApplyClick = (job) => {
                 setActiveJob(job);
                 setSubmissionStatus(null);
+                // Reset form data including file fields
                 setFormData({
                     fullName: '',
                     email: '',
                     phone: '',
                     address: '',
                     country: '',
-                    resumeLink: '',
+                    resumeFile: null,
+                    resumeFileName: '',
                 });
+                if (fileInputRef.current) fileInputRef.current.value = "";
             };
         
             const handleSubmitApplication = async (e) => {
@@ -153,27 +205,42 @@
                     return;
                 }
                 
-                // Simple client-side validation for required country
+                // Client-side validation
                 if (!['USA', 'UK', 'Canada'].includes(formData.country)) {
                     setSubmissionStatus({ type: 'error', message: 'Application failed: Must be a resident of USA, UK, or Canada.' });
                     return;
                 }
+
+                if (!formData.resumeFile) {
+                    setSubmissionStatus({ type: 'error', message: 'Please upload a resume file.' });
+                    return;
+                }
         
                 try {
+                    // In a real app, 'formData.resumeFile' would be uploaded to Firebase Storage here.
+                    // The returned URL would be saved as 'resumeLink'.
+                    
                     const applicationData = {
-                        ...formData,
+                        fullName: formData.fullName,
+                        email: formData.email,
+                        phone: formData.phone,
+                        address: formData.address,
+                        country: formData.country,
                         jobTitle: activeJob.title,
                         jobDepartment: activeJob.department,
                         applicantId: userId,
+                        // Saving file metadata instead of a link
+                        resumeFileName: formData.resumeFileName,
+                        uploadStatus: 'Uploaded (Metadata Only)', // Simulated status
                         timestamp: firebase.serverTimestamp(),
                     };
         
                     const collectionPath = `artifacts/${appId}/public/data/job_applications`;
                     await firebase.addDoc(firebase.collection(db, collectionPath), applicationData);
         
-                    setSubmissionStatus({ type: 'success', message: `Application for ${activeJob.title} submitted successfully!` });
+                    setSubmissionStatus({ type: 'success', message: `Application for ${activeJob.title} submitted successfully! Resume file metadata saved.` });
                     setActiveJob(null); // Close form
-                    setFormData({ fullName: '', email: '', phone: '', address: '', country: '', resumeLink: '' });
+                    handleApplyClick(activeJob); // Reset form state
         
                 } catch (error) {
                     console.error("Error submitting application:", error);
@@ -259,19 +326,23 @@
                                 <option value="Other">Other (Not Eligible)</option>
                             </select>
         
-                            {/* Input: Resume Link */}
+                            {/* FILE INPUT: Resume Upload */}
+                            <label className="block text-sm font-medium text-gray-700 pt-2">Upload Resume (Max 5MB, PDF/DOCX preferred)</label>
                             <input
-                                type="url"
-                                name="resumeLink"
-                                value={formData.resumeLink}
+                                type="file"
+                                name="resumeFile"
+                                ref={fileInputRef}
                                 onChange={handleInputChange}
-                                placeholder="Link to Resume (e.g., Google Drive, Dropbox URL)"
+                                accept=".pdf,.doc,.docx"
                                 required
-                                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"
+                                className="w-full file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
                             />
-                            <p className="text-xs text-gray-500 pt-1">
-                                *Note: Please provide a public link to your resume document (e.g., a shared Google Drive PDF).
-                            </p>
+                            
+                            {formData.resumeFileName && (
+                                <p className="text-sm text-green-600 mt-1">
+                                    File Selected: {formData.resumeFileName}
+                                </p>
+                            )}
         
                             {/* Submission Button */}
                             <div className="flex justify-between items-center pt-4">
@@ -311,16 +382,45 @@
                 </div>
             );
         
+            const AdminLoginForm = () => (
+                <div className="flex justify-end p-4 bg-white rounded-xl shadow-md mb-8">
+                    {isAdminMode ? (
+                        <button
+                            onClick={handleAdminLogout}
+                            className="px-4 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition duration-150"
+                        >
+                            Log Out Admin
+                        </button>
+                    ) : (
+                        <form onSubmit={handleAdminLogin} className="flex space-x-2 items-center">
+                            <input
+                                type="password"
+                                placeholder="Admin Password"
+                                value={adminPassword}
+                                onChange={(e) => setAdminPassword(e.target.value)}
+                                required
+                                className="p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 w-40 text-sm"
+                            />
+                            <button
+                                type="submit"
+                                className="px-4 py-2 bg-indigo-500 text-white font-semibold rounded-lg hover:bg-indigo-600 transition duration-150 text-sm"
+                            >
+                                Admin Login
+                            </button>
+                        </form>
+                    )}
+                </div>
+            );
+        
             const ApplicationDashboard = () => {
-                const currentUserIsAdmin = auth?.currentUser?.uid === userId; // Simple check for demonstration
-                
+                // This component is only rendered if isAdminMode is true
                 return (
                     <div className="mt-12 p-6 bg-gray-50 rounded-xl shadow-inner border-t-4 border-indigo-400">
                         <h2 className="text-2xl font-extrabold text-gray-800 mb-4">Application Dashboard (Admin View)</h2>
                         <p className="text-sm text-gray-600 mb-6">Total Applications: **{applications.length}** | User ID: **{userId || 'Loading...'}**</p>
                         
                         {applications.length === 0 ? (
-                            <p className="text-gray-500 italic">No applications submitted yet. Try submitting one!</p>
+                            <p className="text-gray-500 italic">No applications submitted yet.</p>
                         ) : (
                             <div className="space-y-4">
                                 {applications.map((app) => (
@@ -332,17 +432,13 @@
                                         <p className="text-sm text-gray-700">
                                             <strong className="font-medium">Applicant:</strong> {app.fullName} ({app.email})
                                         </p>
-                                        <p className="text-xs text-gray-500">
+                                        <p className="text-xs text-gray-500 mb-2">
                                             {app.address} | {app.country} | Phone: {app.phone}
                                         </p>
-                                        <a 
-                                            href={app.resumeLink} 
-                                            target="_blank" 
-                                            rel="noopener noreferrer" 
-                                            className="text-sm text-blue-500 hover:text-blue-700 underline mt-1 block truncate"
-                                        >
-                                            Resume Link
-                                        </a>
+                                        <p className="text-sm text-green-600 font-semibold border-t pt-2 mt-2 border-gray-100">
+                                            Resume File: {app.resumeFileName} 
+                                            <span className="text-gray-500 text-xs ml-2">({app.uploadStatus})</span>
+                                        </p>
                                     </div>
                                 ))}
                             </div>
@@ -353,6 +449,8 @@
         
             return (
                 <div className="min-h-screen bg-gray-100 font-sans p-4 md:p-8">
+                    <AdminLoginForm /> {/* Always visible login/logout */}
+                    
                     <header className="text-center py-10 bg-white rounded-xl shadow-md mb-8">
                         <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight">
                             <span className="text-indigo-600">GlobalRemote</span> Careers
@@ -373,10 +471,12 @@
                             </div>
                         </section>
         
-                        {/* Application Dashboard Section */}
-                        <section>
-                            <ApplicationDashboard />
-                        </section>
+                        {/* Application Dashboard Section - CONDITIONAL RENDERING */}
+                        {isAdminMode && (
+                            <section>
+                                <ApplicationDashboard />
+                            </section>
+                        )}
                     </main>
         
                     {/* Modal for Application Form */}
