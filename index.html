@@ -87,7 +87,7 @@
             return acc;
         }, {});
         
-        // --- HELPER COMPONENT (Moved outside App for stability) ---
+        // --- HELPER COMPONENTS (Moved outside App for stability) ---
         const StatusMessage = ({ submissionStatus }) => {
             if (!submissionStatus) return null;
             const baseClasses = "p-3 mt-4 rounded-lg font-medium";
@@ -99,7 +99,7 @@
         };
 
         // --- APPLICATION FORM COMPONENT (Moved outside App for stability) ---
-        const JobApplicationForm = ({ activeJob, formData, handleInputChange, handleSubmitApplication, setActiveJob, submissionStatus, fileInputRef }) => (
+        const JobApplicationForm = ({ activeJob, formData, handleInputChange, handleSubmitApplication, setActiveJob, submissionStatus, fileInputRef, isReady }) => (
             <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-start justify-center p-4 z-50 overflow-y-auto">
                 <div className="bg-white p-6 md:p-10 rounded-xl shadow-2xl max-w-lg w-full mt-10 mb-10 transform transition-all duration-300 max-h-[90vh] overflow-y-auto">
                     <h2 className="text-2xl font-extrabold text-indigo-700 mb-2">{activeJob.title}</h2>
@@ -195,9 +195,14 @@
                             </button>
                             <button
                                 type="submit"
-                                className="px-6 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-150 shadow-md"
+                                disabled={!isReady} 
+                                className={`px-6 py-2 font-semibold rounded-lg transition duration-150 shadow-md ${
+                                    isReady 
+                                        ? 'bg-indigo-600 text-white hover:bg-indigo-700 transform hover:scale-[1.01]'
+                                        : 'bg-indigo-300 text-white cursor-not-allowed'
+                                }`}
                             >
-                                Submit Application
+                                {isReady ? 'Submit Application' : 'Connecting to Database...'}
                             </button>
                         </div>
                         <StatusMessage submissionStatus={submissionStatus} />
@@ -250,7 +255,7 @@
             
             // ADMIN STATE
             const [isAdminMode, setIsAdminMode] = useState(false);
-            const [adminPassword, setAdminPassword] = useState(''); // State is still needed here
+            const [adminPassword, setAdminPassword] = useState('');
             
             // File input reference
             const fileInputRef = useRef(null);
@@ -281,23 +286,46 @@
                     setAuth(firebaseAuth);
         
                     const authenticate = async () => {
-                        if (initialAuthToken) {
-                            await firebase.signInWithCustomToken(firebaseAuth, initialAuthToken);
-                        } else {
-                            await firebase.signInAnonymously(firebaseAuth);
+                        try {
+                            if (initialAuthToken) {
+                                await firebase.signInWithCustomToken(firebaseAuth, initialAuthToken);
+                            } else {
+                                await firebase.signInAnonymously(firebaseAuth);
+                            }
+                            // Wait for auth to complete, then set user ID and readiness flag
+                            setUserId(firebaseAuth.currentUser?.uid || 'anonymous');
+                            setIsAuthReady(true);
+                        } catch (e) {
+                            console.error("Authentication failed:", e);
+                            setIsAuthReady(true); // Still set to true to move past loading, even if auth failed.
                         }
-                        setUserId(firebaseAuth.currentUser?.uid || 'anonymous');
-                        setIsAuthReady(true);
                     };
                     authenticate();
                 } catch (error) {
                     console.error("Firebase initialization failed:", error);
+                    setIsAuthReady(true); // Handle initialization failure gracefully
                 }
             }, []);
-        
+            
+            // --- Loading Screen ---
+            if (!isAuthReady) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-gray-100">
+                        <div className="flex flex-col items-center">
+                            <svg className="animate-spin h-8 w-8 text-indigo-600 mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            <p className="text-gray-600 font-medium">Connecting to job board database...</p>
+                        </div>
+                    </div>
+                );
+            }
+
             // 2. Real-time Listener for Applications (Only runs if Admin Mode is true)
             useEffect(() => {
-                if (!isAuthReady || !db || !isAdminMode) return;
+                // Since this useEffect depends on isAuthReady, it only runs after initialization is complete.
+                if (!db || !isAdminMode) return;
         
                 const collectionPath = `artifacts/${appId}/public/data/job_applications`;
                 const q = firebase.query(firebase.collection(db, collectionPath));
@@ -315,7 +343,7 @@
                 });
         
                 return () => unsubscribe();
-            }, [isAuthReady, db, isAdminMode]);
+            }, [db, isAdminMode]);
         
             const handleInputChange = (e) => {
                 const { name, value, files } = e.target;
@@ -377,6 +405,7 @@
         
             const handleSubmitApplication = async (e) => {
                 e.preventDefault();
+                // We use the isAuthReady guard here as a final measure, but the button should be disabled first.
                 if (!db || !userId) {
                     setSubmissionStatus({ type: 'error', message: 'Database not ready. Please wait a moment.' });
                     return;
@@ -431,8 +460,9 @@
                     <button
                         onClick={() => handleApplyClick(job)}
                         className="w-full py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-150 transform hover:scale-[1.01] shadow-md mt-auto"
+                        disabled={!isAuthReady}
                     >
-                        Apply Now
+                        {isAuthReady ? 'Apply Now' : 'Loading...'}
                     </button>
                 </div>
             );
@@ -442,7 +472,7 @@
                 return (
                     <div className="mt-12 p-6 bg-gray-50 rounded-xl shadow-inner border-t-4 border-indigo-400">
                         <h2 className="text-2xl font-extrabold text-gray-800 mb-4">Application Dashboard (Admin View)</h2>
-                        <p className="text-sm text-gray-600 mb-6">Total Applications: **{applications.length}** | User ID: **{userId || 'Loading...'}**</p>
+                        <p className="text-sm text-gray-600 mb-6">Total Applications: **{applications.length}** | User ID: **{userId || 'N/A'}**</p>
                         
                         {applications.length === 0 ? (
                             <p className="text-gray-500 italic">No applications submitted yet.</p>
@@ -545,6 +575,7 @@
                             setActiveJob={setActiveJob}
                             submissionStatus={submissionStatus}
                             fileInputRef={fileInputRef}
+                            isReady={isAuthReady}
                         />
                     )}
                 </div>
