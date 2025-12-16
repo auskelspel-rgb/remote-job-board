@@ -6,602 +6,538 @@
     <title>GlobalRemote Careers - Job Board</title>
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Load React, ReactDOM, and Babel for client-side JSX compilation -->
-    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Load Firebase libraries -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, query, onSnapshot, serverTimestamp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        
-        // Set Firebase logging level to Debug
-        setLogLevel('Debug');
-
-        // Expose Firebase modules globally for the Babel script to use
-        window.firebase = { 
-            initializeApp, 
-            getAuth, 
-            signInAnonymously, 
-            signInWithCustomToken, 
-            getFirestore, 
-            collection, 
-            addDoc, 
-            query, 
-            onSnapshot, 
-            serverTimestamp 
-        };
-    </script>
     <style>
-        /* Set font and ensure smooth scrolling */
         body {
             font-family: 'Inter', sans-serif;
             scroll-behavior: smooth;
         }
+        /* Custom scrollbar for better visibility */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #9ca3af;
+            border-radius: 10px;
+        }
     </style>
 </head>
 <body class="bg-gray-100">
-    <!-- The Root element where the React app will be rendered -->
-    <div id="root"></div>
+    <!-- Main Application Containers -->
+    <div id="app-container" class="min-h-screen font-sans p-4 md:p-8">
+        <!-- Admin Login/Logout Section -->
+        <div id="admin-login-container"></div>
 
-    <!-- The main script block containing the React component (using type="text/babel") -->
-    <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+        <!-- Header -->
+        <header class="text-center py-10 bg-white rounded-xl shadow-md mb-8">
+            <h1 class="text-4xl font-extrabold text-gray-900 tracking-tight">
+                <span class="text-indigo-600">GlobalRemote</span> Careers
+            </h1>
+            <p class="mt-2 text-xl text-gray-500 font-medium">
+                Premium 100% remote job opportunities across the USA, UK, and Canada.
+            </p>
+        </header>
+
+        <!-- Main Content Area -->
+        <main id="main-content" class="max-w-6xl mx-auto">
+            <!-- Loading Indicator (Initially Visible) -->
+            <div id="loading-indicator" class="min-h-[50vh] flex items-center justify-center">
+                <div class="flex flex-col items-center">
+                    <svg class="animate-spin h-8 w-8 text-indigo-600 mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <p class="text-gray-600 font-medium">Connecting to job board database...</p>
+                </div>
+            </div>
+            
+            <!-- Job Listings and Dashboard go here -->
+        </main>
+
+        <!-- Application Modal Container -->
+        <div id="modal-root"></div>
+    </div>
+
+    <!-- Main JavaScript Logic (ES Module) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, query, onSnapshot, serverTimestamp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
-        // --- Global Variables and Firebase Setup (Accessing variables defined in the environment) ---
+        // --- Configuration & Global State ---
+        setLogLevel('Debug');
+        
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         
-        // ADMIN CONFIG
-        const ADMIN_SECRET = 'globaladmin'; // Secret password to access the dashboard
+        const ADMIN_SECRET = 'globaladmin';
         
+        let db;
+        let auth;
+        let userId = null;
+        let isAdminMode = false;
+        let applications = [];
+        let activeJob = null; // Currently selected job for the modal
+        let submissionStatus = null; // { type: 'success'|'error', message: '...' }
+        let isAuthReady = false; // Flag to indicate Firebase is initialized and authenticated
+
         const JOB_ROLES = [
-            // Engineering & Tech
             { title: 'Senior Cloud Architect', category: 'Engineering & Tech', location: 'USA', department: 'Cloud Infrastructure', desc: 'Design and implement cloud infrastructure (AWS/Azure) for scalability and security. 7+ years of experience required.' },
             { title: 'Remote Software Engineer (L3)', category: 'Engineering & Tech', location: 'USA, UK, Canada', department: 'Product Development', desc: 'Develop, test, and deploy high-quality software solutions using React and Node.js. 3+ years experience.' },
             { title: 'Data Scientist (Machine Learning)', category: 'Engineering & Tech', location: 'UK, Canada', department: 'Analytics', desc: 'Build and deploy predictive models using Python, R, and big data tools. PhD or 5+ years equivalent experience.' },
-            
-            // Marketing & Sales
             { title: 'Digital Marketing Specialist', category: 'Marketing & Sales', location: 'USA, UK, Canada', department: 'Growth', desc: 'Manage global digital campaigns, SEO, and social media strategy. Excellent English written communication is a must.' },
             { title: 'Global Sales Development Representative (SDR)', category: 'Marketing & Sales', location: 'USA, Canada', department: 'Sales', desc: 'Identify and qualify new business opportunities in North America. Base salary + high commission structure.' },
-
-            // Operations & Support
             { title: 'Customer Success Manager', category: 'Operations & Support', location: 'USA, UK, Canada', department: 'Client Relations', desc: 'Serve as the main point of contact for enterprise clients, ensuring high retention rates. Strong client communication skills needed.' },
             { title: 'Financial Planning Analyst (FP&A)', category: 'Finance & HR', location: 'Canada', department: 'Finance', desc: 'Oversee financial forecasting, budgeting, and performance analysis. CPA/CFA preferred.' },
-            
-            // Design & Creative
             { title: 'UX/UI Designer (Figma Expert)', category: 'Design & Creative', location: 'UK', department: 'Design', desc: 'Lead the design of our flagship platform, focusing on user-centered principles and iterative prototyping.' },
-            
-            // Management
             { title: 'Director of Remote Operations', category: 'Management', location: 'USA', department: 'Executive', desc: 'Strategize and manage global remote workforce policies and resource allocation. Must have 10+ years managerial experience.' },
-            
-            // Entry Level
             { title: 'Remote Administrative Assistant', category: 'Operations & Support', location: 'USA, UK', department: 'Administration', desc: 'Handle scheduling, documentation, and virtual office support. Excellent organizational skills needed.' },
         ];
-
+        
         const groupedJobs = JOB_ROLES.reduce((acc, job) => {
             acc[job.category] = acc[job.category] || [];
             acc[job.category].push(job);
             return acc;
         }, {});
+
+        // --- DOM Elements ---
+        const mainContentEl = document.getElementById('main-content');
+        const loadingIndicatorEl = document.getElementById('loading-indicator');
+        const modalRootEl = document.getElementById('modal-root');
+        const adminLoginEl = document.getElementById('admin-login-container');
+
+
+        // --- FIREBASE INITIALIZATION ---
+
+        async function initFirebase() {
+            if (!firebaseConfig || Object.keys(firebaseConfig).length === 0) {
+                console.error("Firebase configuration is missing. Running without data features.");
+                isAuthReady = true;
+                renderApp(); // Render main content even without auth
+                return;
+            }
+
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // Authenticate
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                userId = auth.currentUser?.uid || 'anonymous';
+                isAuthReady = true;
+                
+                console.log(`Firebase connected. User ID: ${userId}`);
+
+            } catch (error) {
+                console.error("Firebase initialization or authentication failed:", error);
+            }
+            
+            // Render the application once authentication is complete
+            renderApp();
+        }
+
+
+        // --- ADMIN DASHBOARD LISTENERS & LOGIC ---
+
+        let unsubscribeSnapshot = null; // For the real-time listener
+
+        function startApplicationListener() {
+            if (unsubscribeSnapshot) unsubscribeSnapshot(); // Clean up old listener
+            if (!db || !isAdminMode) return;
+
+            const collectionPath = `artifacts/${appId}/public/data/job_applications`;
+            const q = query(collection(db, collectionPath));
+
+            unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
+                applications = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data(),
+                    timestamp: doc.data().timestamp ? new Date(doc.data().timestamp.seconds * 1000).toLocaleString() : 'N/A'
+                }));
+                applications.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                renderAdminDashboard(); // Re-render the dashboard whenever data changes
+            }, (error) => {
+                console.error("Error fetching applications: ", error);
+            });
+        }
         
-        // --- HELPER COMPONENTS ---
-        const StatusMessage = ({ submissionStatus }) => {
-            if (!submissionStatus) return null;
+        function handleAdminLogin(e) {
+            e.preventDefault();
+            const passwordInput = adminLoginEl.querySelector('input[type="password"]');
+            const password = passwordInput ? passwordInput.value : '';
+
+            if (password === ADMIN_SECRET) {
+                isAdminMode = true;
+                passwordInput.value = ''; // Clear input on success
+                startApplicationListener();
+                renderAdminLogin(); // Re-render to show logout button
+                renderAdminDashboard(); // Render the dashboard section
+            } else {
+                console.error('Incorrect Admin Password');
+                // Simple visual feedback: clear the password field
+                if (passwordInput) passwordInput.value = '';
+            }
+        }
+
+        function handleAdminLogout() {
+            isAdminMode = false;
+            applications = []; // Clear data
+            if (unsubscribeSnapshot) unsubscribeSnapshot();
+            unsubscribeSnapshot = null;
+            renderAdminLogin();
+            renderMainContent(); // Re-render main content to hide dashboard
+        }
+
+
+        // --- APPLICATION FORM LOGIC ---
+
+        function handleApplyClick(job) {
+            if (!isAuthReady) return; 
+            
+            activeJob = job;
+            submissionStatus = null;
+            renderApplicationModal();
+        }
+
+        async function handleSubmitApplication(e) {
+            e.preventDefault();
+            
+            if (!db || !userId || !isAuthReady) {
+                submissionStatus = { type: 'error', message: 'Connection Error. Please refresh and try again.' };
+                renderApplicationModal();
+                return;
+            }
+
+            const form = e.target;
+            const formData = new FormData(form);
+            
+            // Extract form data
+            const formObj = {
+                fullName: formData.get('fullName'),
+                email: formData.get('email'),
+                phone: formData.get('phone'),
+                address: formData.get('address'),
+                country: formData.get('country'),
+            };
+
+            const resumeFile = form.elements.resumeFile.files[0];
+            
+            // Client-side validation
+            if (!['USA', 'UK', 'Canada'].includes(formObj.country)) {
+                submissionStatus = { type: 'error', message: 'Application failed: Must be a resident of USA, UK, or Canada.' };
+                renderApplicationModal();
+                return;
+            }
+
+            if (!resumeFile) {
+                submissionStatus = { type: 'error', message: 'Please upload a resume file.' };
+                renderApplicationModal();
+                return;
+            }
+            
+            if (resumeFile.size > 5 * 1024 * 1024) { 
+                submissionStatus = { type: 'error', message: 'File is too large. Max size is 5MB.' };
+                // Reset file input
+                form.elements.resumeFile.value = ""; 
+                renderApplicationModal();
+                return;
+            }
+
+            try {
+                const applicationData = {
+                    ...formObj,
+                    jobTitle: activeJob.title,
+                    jobDepartment: activeJob.department,
+                    applicantId: userId,
+                    resumeFileName: resumeFile.name,
+                    uploadStatus: 'Metadata Saved (Full file requires Firebase Storage)', 
+                    timestamp: serverTimestamp(),
+                };
+    
+                const collectionPath = `artifacts/${appId}/public/data/job_applications`;
+                await addDoc(collection(db, collectionPath), applicationData);
+    
+                submissionStatus = { type: 'success', message: `Application for ${activeJob.title} submitted successfully! Resume file metadata saved.` };
+                // Reset the form in the modal
+                form.reset(); 
+
+            } catch (error) {
+                console.error("Error submitting application:", error);
+                submissionStatus = { type: 'error', message: 'Submission failed. Check console for details.' };
+            }
+
+            // Re-render the modal with status message
+            renderApplicationModal();
+
+            // Close modal after a delay if successful
+            if (submissionStatus.type === 'success') {
+                setTimeout(() => {
+                    activeJob = null;
+                    renderApplicationModal();
+                }, 3000);
+            }
+        }
+        
+        function handleCancelClick() {
+            activeJob = null;
+            renderApplicationModal();
+        }
+
+
+        // --- RENDERING FUNCTIONS ---
+
+        function getStatusMessageHTML(status) {
+            if (!status) return '';
             const baseClasses = "p-3 mt-4 rounded-lg font-medium";
-            const classes = submissionStatus.type === 'success'
+            const classes = status.type === 'success'
                 ? `${baseClasses} bg-green-100 text-green-700`
                 : `${baseClasses} bg-red-100 text-red-700`;
     
-            return <div className={classes}>{submissionStatus.message}</div>;
-        };
+            return `<div class="${classes}">${status.message}</div>`;
+        }
 
-        // --- APPLICATION FORM COMPONENT ---
-        const JobApplicationForm = ({ activeJob, formData, handleInputChange, handleSubmitApplication, setActiveJob, submissionStatus, fileInputRef, isReady }) => (
-            <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-start justify-center p-4 z-50 overflow-y-auto">
-                <div className="bg-white p-6 md:p-10 rounded-xl shadow-2xl max-w-lg w-full mt-10 mb-10 transform transition-all duration-300 max-h-[90vh] overflow-y-auto">
-                    <h2 className="text-2xl font-extrabold text-indigo-700 mb-2">{activeJob.title}</h2>
-                    <p className="text-sm text-gray-500 mb-6">Department: {activeJob.department} | Remote in {activeJob.location}</p>
-    
-                    <form onSubmit={handleSubmitApplication} className="space-y-4">
-                        
-                        {/* Input: Full Name */}
-                        <input
-                            type="text"
-                            name="fullName"
-                            value={formData.fullName}
-                            onChange={handleInputChange}
-                            placeholder="Full Name"
-                            required
-                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"
-                        />
-    
-                        {/* Input: Email */}
-                        <input
-                            type="email"
-                            name="email"
-                            value={formData.email}
-                            onChange={handleInputChange}
-                            placeholder="Email Address"
-                            required
-                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"
-                        />
-    
-                        {/* Input: Phone */}
-                        <input
-                            type="tel"
-                            name="phone"
-                            value={formData.phone}
-                            onChange={handleInputChange}
-                            placeholder="Phone Number"
-                            required
-                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"
-                        />
-                        
-                        {/* Input: Address */}
-                        <textarea
-                            name="address"
-                            value={formData.address}
-                            onChange={handleInputChange}
-                            placeholder="Full Mailing Address"
-                            required
-                            rows="2"
-                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 resize-none"
-                        />
-    
-                        {/* Input: Country */}
-                        <select
-                            name="country"
-                            value={formData.country}
-                            onChange={handleInputChange}
-                            required
-                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 bg-white"
-                        >
-                            <option value="">Select Residency (USA, UK, or Canada)</option>
-                            <option value="USA">USA</option>
-                            <option value="UK">UK</option>
-                            <option value="Canada">Canada</option>
-                            <option value="Other">Other (Not Eligible)</option>
-                        </select>
-    
-                        {/* FILE INPUT: Resume Upload */}
-                        <label className="block text-sm font-medium text-gray-700 pt-2">Upload Resume (Max 5MB, PDF/DOCX preferred)</label>
-                        <input
-                            type="file"
-                            name="resumeFile"
-                            ref={fileInputRef}
-                            onChange={handleInputChange}
-                            accept=".pdf,.doc,.docx"
-                            required
-                            className="w-full file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
-                        />
-                        
-                        {formData.resumeFileName && (
-                            <p className="text-sm text-green-600 mt-1">
-                                File Selected: {formData.resumeFileName}
-                            </p>
-                        )}
-    
-                        {/* Submission Button */}
-                        <div className="flex justify-between items-center pt-4">
-                            <button
-                                type="button"
-                                onClick={() => setActiveJob(null)}
-                                className="px-6 py-2 bg-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-300 transition duration-150"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="submit"
-                                // Disabled property relies entirely on isReady (isAuthReady from App)
-                                disabled={!isReady} 
-                                className={`px-6 py-2 font-semibold rounded-lg transition duration-150 shadow-md ${
-                                    isReady 
-                                        ? 'bg-indigo-600 text-white hover:bg-indigo-700 transform hover:scale-[1.01]'
-                                        : 'bg-indigo-300 text-white cursor-not-allowed'
-                                }`}
-                            >
-                                {isReady ? 'Submit Application' : 'Connecting...'}
-                            </button>
-                        </div>
-                        <StatusMessage submissionStatus={submissionStatus} />
-                    </form>
-                </div>
-            </div>
-        );
-
-        // --- ADMIN LOGIN COMPONENT ---
-        const AdminLoginForm = ({ isAdminMode, handleAdminLogout, handleAdminLogin, adminPassword, setAdminPassword }) => (
-            <div className="flex justify-end p-4 bg-white rounded-xl shadow-md mb-8">
-                {isAdminMode ? (
-                    <button
-                        onClick={handleAdminLogout}
-                        className="px-4 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition duration-150"
-                    >
+        function renderAdminLogin() {
+            let html = '';
+            if (isAdminMode) {
+                html = `
+                    <button id="admin-logout-btn" class="px-4 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition duration-150">
                         Log Out Admin
                     </button>
-                ) : (
-                    <form onSubmit={handleAdminLogin} className="flex space-x-2 items-center">
+                `;
+            } else {
+                html = `
+                    <form id="admin-login-form" class="flex space-x-2 items-center">
                         <input
                             type="password"
                             placeholder="Admin Password"
-                            value={adminPassword}
-                            onChange={(e) => setAdminPassword(e.target.value)}
                             required
-                            className="p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 w-40 text-sm"
+                            class="p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 w-40 text-sm"
                         />
                         <button
                             type="submit"
-                            className="px-4 py-2 bg-indigo-500 text-white font-semibold rounded-lg hover:bg-indigo-600 transition duration-150 text-sm"
+                            class="px-4 py-2 bg-indigo-500 text-white font-semibold rounded-lg hover:bg-indigo-600 transition duration-150 text-sm"
                         >
                             Admin Login
                         </button>
                     </form>
-                )}
-            </div>
-        );
-
-
-        
-        const App = () => {
-            const [db, setDb] = useState(null);
-            const [auth, setAuth] = useState(null);
-            const [userId, setUserId] = useState(null);
-            const [isAuthReady, setIsAuthReady] = useState(false);
-            const [applications, setApplications] = useState([]);
-            const [activeJob, setActiveJob] = useState(null);
-            const [submissionStatus, setSubmissionStatus] = useState(null);
-            
-            // ADMIN STATE
-            const [isAdminMode, setIsAdminMode] = useState(false);
-            const [adminPassword, setAdminPassword] = useState('');
-            
-            // File input reference
-            const fileInputRef = useRef(null);
-        
-            // Form state
-            const [formData, setFormData] = useState({
-                fullName: '',
-                email: '',
-                phone: '',
-                address: '',
-                country: '',
-                resumeFile: null, 
-                resumeFileName: '', 
-            });
-        
-            // 1. Firebase Initialization and Authentication
-            useEffect(() => {
-                if (!firebaseConfig || Object.keys(firebaseConfig).length === 0) {
-                    console.error("Firebase configuration is missing.");
-                    // Immediately set ready to allow UI interaction, but submissions will fail gracefully.
-                    setIsAuthReady(true);
-                    return;
-                }
-        
-                try {
-                    const app = firebase.initializeApp(firebaseConfig);
-                    const firestoreDb = firebase.getFirestore(app);
-                    const firebaseAuth = firebase.getAuth(app);
-                    setDb(firestoreDb);
-                    setAuth(firebaseAuth);
-        
-                    const authenticate = async () => {
-                        try {
-                            if (initialAuthToken) {
-                                await firebase.signInWithCustomToken(firebaseAuth, initialAuthToken);
-                            } else {
-                                await firebase.signInAnonymously(firebaseAuth);
-                            }
-                            // Wait for auth to complete, then set user ID and readiness flag
-                            setUserId(firebaseAuth.currentUser?.uid || 'anonymous');
-                            setIsAuthReady(true);
-                        } catch (e) {
-                            console.error("Authentication failed:", e);
-                            // Even if auth fails, we set ready to false and let Firestore ops fail or be handled.
-                            setIsAuthReady(true); 
-                        }
-                    };
-                    authenticate();
-                } catch (error) {
-                    console.error("Firebase initialization failed:", error);
-                    setIsAuthReady(true); // Handle initialization failure gracefully
-                }
-            }, []);
-            
-            // --- Loading Screen ---
-            if (!isAuthReady) {
-                return (
-                    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-                        <div className="flex flex-col items-center">
-                            <svg className="animate-spin h-8 w-8 text-indigo-600 mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                            </svg>
-                            <p className="text-gray-600 font-medium">Connecting to job board database...</p>
-                        </div>
-                    </div>
-                );
+                `;
             }
-
-            // 2. Real-time Listener for Applications (Only runs if Admin Mode is true)
-            useEffect(() => {
-                // Since this useEffect depends on isAuthReady, it only runs after initialization is complete.
-                if (!db || !isAdminMode) return;
-        
-                const collectionPath = `artifacts/${appId}/public/data/job_applications`;
-                const q = firebase.query(firebase.collection(db, collectionPath));
-        
-                const unsubscribe = firebase.onSnapshot(q, (snapshot) => {
-                    const fetchedApplications = snapshot.docs.map(doc => ({
-                        id: doc.id,
-                        ...doc.data(),
-                        // Convert Firestore Timestamp to readable date
-                        timestamp: doc.data().timestamp ? new Date(doc.data().timestamp.seconds * 1000).toLocaleString() : 'N/A'
-                    }));
-                    setApplications(fetchedApplications.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)));
-                }, (error) => {
-                    console.error("Error fetching applications: ", error);
-                });
-        
-                return () => unsubscribe();
-            }, [db, isAdminMode, isAuthReady]); // Added isAuthReady dependency for clarity
-        
-            const handleInputChange = (e) => {
-                const { name, value, files } = e.target;
-                
-                if (name === 'resumeFile' && files && files[0]) {
-                    const file = files[0];
-                    if (file.size > 5 * 1024 * 1024) { 
-                        setSubmissionStatus({ type: 'error', message: 'File is too large. Max size is 5MB.' });
-                        if (fileInputRef.current) fileInputRef.current.value = "";
-                        setFormData(prev => ({ ...prev, resumeFile: null, resumeFileName: '' }));
-                        return;
-                    }
-
-                    // Store the File object and its name
-                    setFormData(prev => ({ 
-                        ...prev, 
-                        resumeFile: file,
-                        resumeFileName: file.name
-                    }));
-                } else {
-                    // Handle standard text inputs
-                    setFormData(prev => ({ ...prev, [name]: value }));
-                }
-            };
             
-            // --- Admin Logic ---
-            const handleAdminLogin = (e) => {
-                e.preventDefault();
-                if (adminPassword === ADMIN_SECRET) {
-                    setIsAdminMode(true);
-                    setAdminPassword('');
-                } else {
-                    console.error('Incorrect Admin Password');
-                    setAdminPassword('');
-                }
-            };
-        
-            const handleAdminLogout = () => {
-                setIsAdminMode(false);
-                setApplications([]); // Clear applications on logout
-            };
-            
-            // --- Application Logic ---
-            const handleApplyClick = (job) => {
-                // Only open the application form if Auth is ready
-                if (!isAuthReady) return; 
-                
-                setActiveJob(job);
-                setSubmissionStatus(null);
-                // Reset form data including file fields
-                setFormData({
-                    fullName: '',
-                    email: '',
-                    phone: '',
-                    address: '',
-                    country: '',
-                    resumeFile: null,
-                    resumeFileName: '',
-                });
-                if (fileInputRef.current) fileInputRef.current.value = "";
-            };
-        
-            const handleSubmitApplication = async (e) => {
-                e.preventDefault();
-                
-                // CRITICAL CHECK: If the button was somehow clicked before ready, log a fatal error 
-                // but do not display the old error message, as the button should be disabled.
-                if (!db || !userId || !isAuthReady) {
-                    console.error('FATAL: Attempted submission while Firebase/Auth was not ready. Form should have been disabled.');
-                    setSubmissionStatus({ type: 'error', message: 'Connection Error. Please refresh and try again.' });
-                    return;
-                }
-                
-                // Client-side validation
-                if (!['USA', 'UK', 'Canada'].includes(formData.country)) {
-                    setSubmissionStatus({ type: 'error', message: 'Application failed: Must be a resident of USA, UK, or Canada.' });
-                    return;
-                }
+            adminLoginEl.innerHTML = `<div class="flex justify-end p-4 bg-white rounded-xl shadow-md mb-8">${html}</div>`;
 
-                if (!formData.resumeFile) {
-                    setSubmissionStatus({ type: 'error', message: 'Please upload a resume file.' });
-                    return;
-                }
-        
-                try {
-                    // Data saved to Firestore, including ALL required applicant info:
-                    const applicationData = {
-                        fullName: formData.fullName,
-                        email: formData.email,
-                        phone: formData.phone,
-                        address: formData.address,
-                        country: formData.country,
-                        jobTitle: activeJob.title,
-                        jobDepartment: activeJob.department,
-                        applicantId: userId,
-                        resumeFileName: formData.resumeFileName,
-                        uploadStatus: 'Metadata Saved (Full file requires Firebase Storage)', 
-                        timestamp: firebase.serverTimestamp(),
-                    };
-        
-                    const collectionPath = `artifacts/${appId}/public/data/job_applications`;
-                    await firebase.addDoc(firebase.collection(db, collectionPath), applicationData);
-        
-                    setSubmissionStatus({ type: 'success', message: `Application for ${activeJob.title} submitted successfully! Resume file metadata saved.` });
-                    setActiveJob(null); // Close form
-                    handleApplyClick(activeJob); // Reset form state
-        
-                } catch (error) {
-                    console.error("Error submitting application:", error);
-                    setSubmissionStatus({ type: 'error', message: 'Submission failed. Check console for details.' });
-                }
-            };
-        
-            const JobCard = ({ job }) => (
-                <div className="bg-white p-6 rounded-xl shadow-lg hover:shadow-xl transition duration-300 border border-gray-100 flex flex-col h-full">
-                    <h3 className="text-xl font-bold text-gray-800 mb-1">{job.title}</h3>
-                    <p className="text-sm text-indigo-600 font-medium mb-3">{job.department} | Remote</p>
-                    <p className="text-gray-600 mb-4 text-sm flex-grow">{job.desc}</p>
-                    <p className="text-xs text-gray-500 mb-4 font-semibold">📍 {job.location}</p>
-                    <button
-                        onClick={() => handleApplyClick(job)}
-                        // Disable the button based on auth readiness
-                        disabled={!isAuthReady}
-                        className={`w-full py-2 font-semibold rounded-lg transition duration-150 transform shadow-md mt-auto ${
-                            isAuthReady 
-                                ? 'bg-indigo-600 text-white hover:bg-indigo-700 hover:scale-[1.01]'
-                                : 'bg-indigo-300 text-white cursor-not-allowed'
-                        }`}
-                    >
-                        {isAuthReady ? 'Apply Now' : 'Loading...'}
-                    </button>
-                </div>
-            );
-        
-            const ApplicationDashboard = () => {
-                // This component is only rendered if isAdminMode is true
-                return (
-                    <div className="mt-12 p-6 bg-gray-50 rounded-xl shadow-inner border-t-4 border-indigo-400">
-                        <h2 className="text-2xl font-extrabold text-gray-800 mb-4">Application Dashboard (Admin View)</h2>
-                        <p className="text-sm text-gray-600 mb-6">Total Applications: **{applications.length}** | User ID: **{userId || 'N/A'}**</p>
-                        
-                        {applications.length === 0 ? (
-                            <p className="text-gray-500 italic">No applications submitted yet.</p>
-                        ) : (
-                            <div className="overflow-x-auto shadow-lg rounded-lg">
-                                <table className="min-w-full bg-white divide-y divide-gray-200">
-                                    <thead className="bg-indigo-50">
-                                        <tr>
-                                            {['Job Title', 'Name', 'Country', 'Email', 'Phone', 'Address', 'Resume File', 'Applied On'].map(header => (
-                                                <th key={header} className="px-6 py-3 text-left text-xs font-medium text-indigo-700 uppercase tracking-wider whitespace-nowrap">
-                                                    {header}
-                                                </th>
-                                            ))}
-                                        </tr>
-                                    </thead>
-                                    <tbody className="bg-white divide-y divide-gray-200">
-                                        {applications.map((app) => (
-                                            <tr key={app.id} className="hover:bg-indigo-50/50">
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{app.jobTitle}</td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{app.fullName}</td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{app.country}</td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-blue-600 truncate max-w-[150px]">{app.email}</td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{app.phone}</td>
-                                                <td className="px-6 py-4 whitespace-normal text-sm text-gray-600 max-w-[200px]">{app.address}</td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-green-700 truncate max-w-[120px]">
-                                                    {app.resumeFileName}
-                                                </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-xs text-gray-500">{app.timestamp}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
-                    </div>
-                );
-            };
-
-            const JobCategorySection = ({ category, jobs }) => (
-                <section className="mb-12">
-                    <h2 className="text-3xl font-bold text-gray-800 mb-6 border-b-2 border-indigo-200 pb-2 flex items-center">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-indigo-500 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                        </svg>
-                        {category}
-                    </h2>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {jobs.map((job, index) => (
-                            <JobCard key={index} job={job} />
-                        ))}
-                    </div>
-                </section>
-            );
-        
-            return (
-                <div className="min-h-screen bg-gray-100 font-sans p-4 md:p-8">
-                    <AdminLoginForm 
-                        isAdminMode={isAdminMode}
-                        handleAdminLogout={handleAdminLogout}
-                        handleAdminLogin={handleAdminLogin}
-                        adminPassword={adminPassword}
-                        setAdminPassword={setAdminPassword}
-                    />
-                    
-                    <header className="text-center py-10 bg-white rounded-xl shadow-md mb-8">
-                        <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight">
-                            <span className="text-indigo-600">GlobalRemote</span> Careers
-                        </h1>
-                        <p className="mt-2 text-xl text-gray-500 font-medium">
-                            Premium 100% remote job opportunities across the USA, UK, and Canada.
-                        </p>
-                    </header>
-        
-                    <main className="max-w-6xl mx-auto">
-                        
-                        {/* Job Listings Section - Grouped by Category */}
-                        {Object.keys(groupedJobs).map(category => (
-                            <JobCategorySection 
-                                key={category} 
-                                category={category} 
-                                jobs={groupedJobs[category]} 
-                            />
-                        ))}
-        
-                        {/* Application Dashboard Section - CONDITIONAL RENDERING */}
-                        {isAdminMode && (
-                            <section>
-                                <ApplicationDashboard />
-                            </section>
-                        )}
-                    </main>
-        
-                    {/* Modal for Application Form */}
-                    {activeJob && (
-                        <JobApplicationForm 
-                            activeJob={activeJob}
-                            formData={formData}
-                            handleInputChange={handleInputChange}
-                            handleSubmitApplication={handleSubmitApplication}
-                            setActiveJob={setActiveJob}
-                            submissionStatus={submissionStatus}
-                            fileInputRef={fileInputRef}
-                            isReady={isAuthReady}
-                        />
-                    )}
-                </div>
-            );
-        };
-        
-        // Render the App component ONLY after the entire document (including all scripts) is loaded.
-        window.onload = function() {
-            ReactDOM.render(<App />, document.getElementById('root'));
+            // Attach event listeners
+            if (isAdminMode) {
+                document.getElementById('admin-logout-btn').addEventListener('click', handleAdminLogout);
+            } else {
+                document.getElementById('admin-login-form').addEventListener('submit', handleAdminLogin);
+            }
         }
 
+        function renderJobCard(job) {
+            const buttonText = isAuthReady ? 'Apply Now' : 'Loading...';
+            const buttonClass = isAuthReady 
+                ? 'bg-indigo-600 text-white hover:bg-indigo-700 hover:scale-[1.01]'
+                : 'bg-indigo-300 text-white cursor-not-allowed';
+
+            return `
+                <div class="bg-white p-6 rounded-xl shadow-lg hover:shadow-xl transition duration-300 border border-gray-100 flex flex-col h-full">
+                    <h3 class="text-xl font-bold text-gray-800 mb-1">${job.title}</h3>
+                    <p class="text-sm text-indigo-600 font-medium mb-3">${job.department} | Remote</p>
+                    <p class="text-gray-600 mb-4 text-sm flex-grow">${job.desc}</p>
+                    <p class="text-xs text-gray-500 mb-4 font-semibold">📍 ${job.location}</p>
+                    <button
+                        data-job-title="${job.title}"
+                        class="apply-btn w-full py-2 font-semibold rounded-lg transition duration-150 transform shadow-md mt-auto ${buttonClass}"
+                        ${isAuthReady ? '' : 'disabled'}
+                    >
+                        ${buttonText}
+                    </button>
+                </div>
+            `;
+        }
+        
+        function renderJobBoard() {
+            let jobBoardHTML = '';
+            
+            for (const category in groupedJobs) {
+                const jobs = groupedJobs[category];
+                const jobCardsHTML = jobs.map(renderJobCard).join('');
+                
+                jobBoardHTML += `
+                    <section class="mb-12">
+                        <h2 class="text-3xl font-bold text-gray-800 mb-6 border-b-2 border-indigo-200 pb-2 flex items-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-indigo-500 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                            </svg>
+                            ${category}
+                        </h2>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            ${jobCardsHTML}
+                        </div>
+                    </section>
+                `;
+            }
+            
+            return jobBoardHTML;
+        }
+
+        function renderApplicationModal() {
+            if (!activeJob) {
+                modalRootEl.innerHTML = '';
+                return;
+            }
+
+            const statusHTML = getStatusMessageHTML(submissionStatus);
+            const buttonText = isAuthReady ? 'Submit Application' : 'Connecting...';
+            const buttonClass = isAuthReady 
+                ? 'bg-indigo-600 text-white hover:bg-indigo-700 transform hover:scale-[1.01]'
+                : 'bg-indigo-300 text-white cursor-not-allowed';
+
+            modalRootEl.innerHTML = `
+                <div class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-start justify-center p-4 z-50 overflow-y-auto">
+                    <div class="bg-white p-6 md:p-10 rounded-xl shadow-2xl max-w-lg w-full mt-10 mb-10 transform transition-all duration-300 max-h-[90vh] overflow-y-auto">
+                        <h2 class="text-2xl font-extrabold text-indigo-700 mb-2">${activeJob.title}</h2>
+                        <p class="text-sm text-gray-500 mb-6">Department: ${activeJob.department} | Remote in ${activeJob.location}</p>
+        
+                        <form id="job-application-form" class="space-y-4">
+                            
+                            <input type="text" name="fullName" placeholder="Full Name" required class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"/>
+                            <input type="email" name="email" placeholder="Email Address" required class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"/>
+                            <input type="tel" name="phone" placeholder="Phone Number" required class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"/>
+                            <textarea name="address" placeholder="Full Mailing Address" required rows="2" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 resize-none"></textarea>
+        
+                            <select name="country" required class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 bg-white">
+                                <option value="">Select Residency (USA, UK, or Canada)</option>
+                                <option value="USA">USA</option>
+                                <option value="UK">UK</option>
+                                <option value="Canada">Canada</option>
+                                <option value="Other">Other (Not Eligible)</option>
+                            </select>
+        
+                            <label class="block text-sm font-medium text-gray-700 pt-2">Upload Resume (Max 5MB, PDF/DOCX preferred)</label>
+                            <input type="file" name="resumeFile" accept=".pdf,.doc,.docx" required class="w-full file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"/>
+                            
+                            <div class="flex justify-between items-center pt-4">
+                                <button type="button" id="cancel-btn" class="px-6 py-2 bg-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-300 transition duration-150">
+                                    Cancel
+                                </button>
+                                <button type="submit" id="submit-btn" class="px-6 py-2 font-semibold rounded-lg transition duration-150 shadow-md ${buttonClass}" ${isAuthReady ? '' : 'disabled'}>
+                                    ${buttonText}
+                                </button>
+                            </div>
+                            ${statusHTML}
+                        </form>
+                    </div>
+                </div>
+            `;
+
+            // Attach event listeners for the modal
+            document.getElementById('job-application-form').addEventListener('submit', handleSubmitApplication);
+            document.getElementById('cancel-btn').addEventListener('click', handleCancelClick);
+        }
+
+        function renderAdminDashboard() {
+            let tableHTML = '';
+            if (applications.length === 0) {
+                tableHTML = '<p class="text-gray-500 italic">No applications submitted yet.</p>';
+            } else {
+                const rows = applications.map(app => `
+                    <tr class="hover:bg-indigo-50/50">
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${app.jobTitle}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${app.fullName}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${app.country}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-blue-600 truncate max-w-[150px]">${app.email}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${app.phone}</td>
+                        <td class="px-6 py-4 whitespace-normal text-sm text-gray-600 max-w-[200px]">${app.address}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-semibold text-green-700 truncate max-w-[120px]">${app.resumeFileName}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-xs text-gray-500">${app.timestamp}</td>
+                    </tr>
+                `).join('');
+
+                tableHTML = `
+                    <div class="overflow-x-auto shadow-lg rounded-lg">
+                        <table class="min-w-full bg-white divide-y divide-gray-200">
+                            <thead class="bg-indigo-50">
+                                <tr>
+                                    ${['Job Title', 'Name', 'Country', 'Email', 'Phone', 'Address', 'Resume File', 'Applied On'].map(header => `
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-indigo-700 uppercase tracking-wider whitespace-nowrap">${header}</th>
+                                    `).join('')}
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                ${rows}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
+
+            const dashboardSection = `
+                <section id="admin-dashboard" class="mt-12 p-6 bg-gray-50 rounded-xl shadow-inner border-t-4 border-indigo-400">
+                    <h2 class="text-2xl font-extrabold text-gray-800 mb-4">Application Dashboard (Admin View)</h2>
+                    <p class="text-sm text-gray-600 mb-6">Total Applications: **${applications.length}** | User ID: **${userId || 'N/A'}**</p>
+                    ${tableHTML}
+                </section>
+            `;
+            
+            // Inject or update the dashboard section
+            let dashboardEl = document.getElementById('admin-dashboard');
+            if (dashboardEl) {
+                dashboardEl.outerHTML = dashboardSection; // Easier than deep manipulation
+            } else {
+                mainContentEl.insertAdjacentHTML('beforeend', dashboardSection);
+            }
+        }
+        
+        function renderMainContent() {
+            // Hide loading indicator
+            loadingIndicatorEl.style.display = 'none';
+
+            // Render Job Board
+            let html = renderJobBoard();
+            
+            // If admin mode, clear existing dashboard and re-render it
+            let dashboardEl = document.getElementById('admin-dashboard');
+            if (dashboardEl) {
+                dashboardEl.remove();
+            }
+
+            // Render Dashboard if in admin mode
+            if (isAdminMode) {
+                mainContentEl.innerHTML = html; // Render jobs first
+                renderAdminDashboard(); // Then append the dashboard
+            } else {
+                mainContentEl.innerHTML = html;
+            }
+
+            // Attach event listeners to all 'Apply Now' buttons
+            document.querySelectorAll('.apply-btn').forEach(button => {
+                button.addEventListener('click', (e) => {
+                    const jobTitle = e.currentTarget.getAttribute('data-job-title');
+                    const job = JOB_ROLES.find(j => j.title === jobTitle);
+                    if (job) handleApplyClick(job);
+                });
+            });
+        }
+        
+        function renderApp() {
+            // This is the main render loop, called when global state changes
+            renderAdminLogin();
+            if (isAuthReady) {
+                renderMainContent();
+            }
+            renderApplicationModal();
+        }
+
+        // --- Start the Application ---
+        document.addEventListener('DOMContentLoaded', initFirebase);
+        
     </script>
 </body>
 </html>
