@@ -87,7 +87,7 @@
             return acc;
         }, {});
         
-        // --- HELPER COMPONENTS (Moved outside App for stability) ---
+        // --- HELPER COMPONENTS ---
         const StatusMessage = ({ submissionStatus }) => {
             if (!submissionStatus) return null;
             const baseClasses = "p-3 mt-4 rounded-lg font-medium";
@@ -98,7 +98,7 @@
             return <div className={classes}>{submissionStatus.message}</div>;
         };
 
-        // --- APPLICATION FORM COMPONENT (Moved outside App for stability) ---
+        // --- APPLICATION FORM COMPONENT ---
         const JobApplicationForm = ({ activeJob, formData, handleInputChange, handleSubmitApplication, setActiveJob, submissionStatus, fileInputRef, isReady }) => (
             <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-start justify-center p-4 z-50 overflow-y-auto">
                 <div className="bg-white p-6 md:p-10 rounded-xl shadow-2xl max-w-lg w-full mt-10 mb-10 transform transition-all duration-300 max-h-[90vh] overflow-y-auto">
@@ -195,6 +195,7 @@
                             </button>
                             <button
                                 type="submit"
+                                // Disabled property relies entirely on isReady (isAuthReady from App)
                                 disabled={!isReady} 
                                 className={`px-6 py-2 font-semibold rounded-lg transition duration-150 shadow-md ${
                                     isReady 
@@ -202,7 +203,7 @@
                                         : 'bg-indigo-300 text-white cursor-not-allowed'
                                 }`}
                             >
-                                {isReady ? 'Submit Application' : 'Connecting to Database...'}
+                                {isReady ? 'Submit Application' : 'Connecting...'}
                             </button>
                         </div>
                         <StatusMessage submissionStatus={submissionStatus} />
@@ -211,7 +212,7 @@
             </div>
         );
 
-        // --- ADMIN LOGIN COMPONENT (MOVED OUTSIDE App for stability) ---
+        // --- ADMIN LOGIN COMPONENT ---
         const AdminLoginForm = ({ isAdminMode, handleAdminLogout, handleAdminLogin, adminPassword, setAdminPassword }) => (
             <div className="flex justify-end p-4 bg-white rounded-xl shadow-md mb-8">
                 {isAdminMode ? (
@@ -275,6 +276,8 @@
             useEffect(() => {
                 if (!firebaseConfig || Object.keys(firebaseConfig).length === 0) {
                     console.error("Firebase configuration is missing.");
+                    // Immediately set ready to allow UI interaction, but submissions will fail gracefully.
+                    setIsAuthReady(true);
                     return;
                 }
         
@@ -297,7 +300,8 @@
                             setIsAuthReady(true);
                         } catch (e) {
                             console.error("Authentication failed:", e);
-                            setIsAuthReady(true); // Still set to true to move past loading, even if auth failed.
+                            // Even if auth fails, we set ready to false and let Firestore ops fail or be handled.
+                            setIsAuthReady(true); 
                         }
                     };
                     authenticate();
@@ -343,7 +347,7 @@
                 });
         
                 return () => unsubscribe();
-            }, [db, isAdminMode]);
+            }, [db, isAdminMode, isAuthReady]); // Added isAuthReady dependency for clarity
         
             const handleInputChange = (e) => {
                 const { name, value, files } = e.target;
@@ -388,6 +392,9 @@
             
             // --- Application Logic ---
             const handleApplyClick = (job) => {
+                // Only open the application form if Auth is ready
+                if (!isAuthReady) return; 
+                
                 setActiveJob(job);
                 setSubmissionStatus(null);
                 // Reset form data including file fields
@@ -405,9 +412,12 @@
         
             const handleSubmitApplication = async (e) => {
                 e.preventDefault();
-                // We use the isAuthReady guard here as a final measure, but the button should be disabled first.
-                if (!db || !userId) {
-                    setSubmissionStatus({ type: 'error', message: 'Database not ready. Please wait a moment.' });
+                
+                // CRITICAL CHECK: If the button was somehow clicked before ready, log a fatal error 
+                // but do not display the old error message, as the button should be disabled.
+                if (!db || !userId || !isAuthReady) {
+                    console.error('FATAL: Attempted submission while Firebase/Auth was not ready. Form should have been disabled.');
+                    setSubmissionStatus({ type: 'error', message: 'Connection Error. Please refresh and try again.' });
                     return;
                 }
                 
@@ -459,8 +469,13 @@
                     <p className="text-xs text-gray-500 mb-4 font-semibold">📍 {job.location}</p>
                     <button
                         onClick={() => handleApplyClick(job)}
-                        className="w-full py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-150 transform hover:scale-[1.01] shadow-md mt-auto"
+                        // Disable the button based on auth readiness
                         disabled={!isAuthReady}
+                        className={`w-full py-2 font-semibold rounded-lg transition duration-150 transform shadow-md mt-auto ${
+                            isAuthReady 
+                                ? 'bg-indigo-600 text-white hover:bg-indigo-700 hover:scale-[1.01]'
+                                : 'bg-indigo-300 text-white cursor-not-allowed'
+                        }`}
                     >
                         {isAuthReady ? 'Apply Now' : 'Loading...'}
                     </button>
@@ -582,8 +597,10 @@
             );
         };
         
-        // Render the App component
-        ReactDOM.render(<App />, document.getElementById('root'));
+        // Render the App component ONLY after the entire document (including all scripts) is loaded.
+        window.onload = function() {
+            ReactDOM.render(<App />, document.getElementById('root'));
+        }
 
     </script>
 </body>
